@@ -9,20 +9,22 @@ using costmap_2d::NO_INFORMATION;
 namespace path_costmap_layer
 {
     
-PathSubscriber::PathSubscriber(ros::NodeHandle nh, PathLayer* main, std::string topic, unsigned int id) : main_(main), id_(id) {
+PathSubscriber::PathSubscriber(ros::NodeHandle nh, PathLayer* main, std::string topic) : main_(main), topic_(topic) {
     subscriber_ = nh.subscribe(topic, 1, &PathSubscriber::incomingPath, this);
 }
 
 void PathSubscriber::incomingPath(const nav_msgs::PathConstPtr& message)
 {
-    main_->incomingPath(message, id_);
+    main_->incomingPath(message, topic_);
 }
+
 
 PathLayer::PathLayer() : needsUpdate(false), old_x0_(1), old_x1_(0) {}
 
 void PathLayer::onInitialize()
 {
   ros::NodeHandle nh("~/" + name_);
+  nhptr = &nh;
   current_ = true;
   default_value_ = NO_INFORMATION;
   matchSize();
@@ -32,14 +34,15 @@ void PathLayer::onInitialize()
   cost_ = i_cost;
   
   nh.param("radius", radius_, 0.5);
+
+  
   
   std::vector<std::string> topic_list;
   nh.getParam("path_topics", topic_list);
   for(unsigned i=0; i < topic_list.size(); i++) {
       ROS_INFO("TOPIC: %s", topic_list[i].c_str());
-      new PathSubscriber(nh, this, topic_list[i], i);
+      subscribers_[topic_list[i]] = new PathSubscriber(nh, this, topic_list[i]);
   }
-  paths_.resize( topic_list.size() );
 
   dsrv_ = new dynamic_reconfigure::Server<costmap_2d::GenericPluginConfig>(nh);
   dynamic_reconfigure::Server<costmap_2d::GenericPluginConfig>::CallbackType cb = boost::bind(
@@ -61,12 +64,40 @@ void PathLayer::reconfigureCB(costmap_2d::GenericPluginConfig &config, uint32_t 
   enabled_ = config.enabled;
 }
 
-void PathLayer::incomingPath(const nav_msgs::PathConstPtr& path, int id)
+void PathLayer::incomingPath(const nav_msgs::PathConstPtr& path, std::string topic)
 {
-    if(paths_[id].header.stamp == path->header.stamp)
+    if(paths_[topic].header.stamp == path->header.stamp)
         return;
-    paths_[id] = *path;
+    paths_[topic] = *path;
+    checkParameter();
     drawAllPaths();
+}
+
+void PathLayer::checkParameter()
+{
+  // update list of robot
+  std::vector<std::string> topic_list;
+  ros::param::getCached("~/"+name_+"/footprint_topics", topic_list);
+  // find old subscribers
+  // std::vector<std::string> remove_list;
+  // for(std::map<std::string,PathSubscriber*>::iterator it=subscribers_.begin(); it !==subscribers_.end(); ++it){
+  //   if (std::find(topic_list.begin(), topic_list.end(), it->first)==topic_list.end()){
+  //     remove_list.push_back(it->first);
+  //   }
+  // }
+  // // remove old subscribers and paths
+  // for (int i=0;i<remove_list.size();i++){
+  //   subscribers_.erase(remove_list[i]);
+  //   if (std::find(paths_.begin(), paths_.end(), remove_list[i])!=paths_.end()){
+  //     paths.erase(remove_list[i]);
+  //   }
+  // }  
+  //add new subscribers
+  for (int i=0;i<topic_list.size();i++){
+    if (subscribers_.find(topic_list[i])==subscribers_.end()) {
+      subscribers_[topic_list[i]] = new PathSubscriber(*nhptr, this, topic_list[i]);
+    }
+  }  
 }
 
 void PathLayer::drawAllPaths()
@@ -81,26 +112,27 @@ void PathLayer::drawAllPaths()
     std::vector<int> pixels;
     
     double min_x = 1e6, min_y = 1e6, max_x=-1e6, max_y = -1e6;
-
-    for(int j=0;j<paths_.size();j++){
+    nav_msgs::Path path;
+    for(std::map<std::string,nav_msgs::Path>::iterator it=paths_.begin(); it !=paths_.end(); ++it){
+      path = it->second;
         
-        for(int i=0;i<paths_[j].poses.size(); i++){
-            double x = paths_[j].poses[i].pose.position.x, 
-                   y = paths_[j].poses[i].pose.position.y;
-            
-            unsigned int mx;
-            unsigned int my;
-            if(!worldToMap(x, y, mx, my)){
-                continue;
-            }
-            
-            min_x = std::min(x-radius_, min_x);
-            max_x = std::max(x+radius_, max_x);
-            min_y = std::min(y-radius_, min_y);
-            max_y = std::max(y+radius_, max_y);
-    
-            pixels.push_back( getIndex(mx, my) );
-        }
+      for(int i=0;i<path.poses.size(); i++){
+          double x = path.poses[i].pose.position.x, 
+                 y = path.poses[i].pose.position.y;
+          
+          unsigned int mx;
+          unsigned int my;
+          if(!worldToMap(x, y, mx, my)){
+              continue;
+          }
+          
+          min_x = std::min(x-radius_, min_x);
+          max_x = std::max(x+radius_, max_x);
+          min_y = std::min(y-radius_, min_y);
+          max_y = std::max(y+radius_, max_y);
+  
+          pixels.push_back( getIndex(mx, my) );
+      }
     }
     inflater.inflate(this, pixels, radius_);
 

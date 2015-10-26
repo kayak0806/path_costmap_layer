@@ -15,11 +15,11 @@ class PathLayer;
 class PathSubscriber
 {
 public:
-    PathSubscriber(ros::NodeHandle nh, PathLayer* main, std::string topic, unsigned int id);
+    PathSubscriber(ros::NodeHandle nh, PathLayer* main, std::string topic);
 
     void incomingPath(const nav_msgs::PathConstPtr& message);
 private:
-    unsigned int id_;
+    std::string topic_;
     PathLayer* main_;
     ros::Subscriber subscriber_;
 };
@@ -40,20 +40,25 @@ public:
 
   virtual void matchSize();
 
-  void incomingPath(const nav_msgs::PathConstPtr& message, int id);
+  void incomingPath(const nav_msgs::PathConstPtr& message, std::string topic);
 
 private:
-  std::vector< ros::Subscriber > subscribers_;
-  std::vector< nav_msgs::Path > paths_;
+  std::map< std::string, nav_msgs::Path > paths_;
+  std::map< std::string, PathSubscriber*>  subscribers_;
   Inflater inflater;
   unsigned char cost_;
   double radius_;
+
+  ros::NodeHandle* nhptr;
   
   bool needsUpdate;
   double old_x0_, old_y0_, old_x1_, old_y1_;
   double min_x_, min_y_, max_x_, max_y_;
   
   void drawAllPaths();
+
+  void checkParameter();
+
   
   void reconfigureCB(costmap_2d::GenericPluginConfig &config, uint32_t level);
   dynamic_reconfigure::Server<costmap_2d::GenericPluginConfig> *dsrv_;
